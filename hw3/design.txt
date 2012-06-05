@@ -1,0 +1,197 @@
+	Date: 04/10/12
+CSE-506, Spring 2012, HW#3
+
+
+Project Name:		Efficient tracking of last modified files
+Project Members:	Himanshu Jindal (hjindal@cs.stonybrook.edu)
+			Piyush Kansal (pkansal@cs.stonybrook.edu)
+
+
+---------
+Topics
+---------
+- Motivation
+- Existing Implementation
+- Assumptions
+- Our Implementation
+	- User Level - uWatch
+	- Kernel Level - sysWatch() and kWatch
+- Tracking Modifications
+- Benchmarking
+- Script for demo
+- References
+
+
+------------
+Motivation
+------------
+-	With the increased usage of backup systems, there is a need for an efficient method to find 
+	out the last modified files on a predefined directory set by user, so that the backup system 
+	can immediately backup the modified files
+- 	The existing implementations either scan all the directories recursively or create a larger 
+	memory footprint by creating a separate data structure per file in memory which is not very 
+	efficient
+- 	This is the source of our motivation. So, for our HW3, we decided to implement a Linux Kernel 
+	Module(LKM), along with a user level program, which will enable users to track all the changes 
+	inside a directory efficiently(both time and memory)
+
+
+---------------------------------
+Existing Implementation
+---------------------------------
+Linux uses Inotify/Dnotify. However, they suffer from a few problems:
+- Dnotify:
+	- requires opening one file descriptor for each directory that you intend to watch for changes. 
+	  This can become quite costly when you are monitoring several directories at once, since it is 
+	  possible to reach a per-process file descriptor limit
+	- problem of hard links to files was ignored. So if a file (x) exists in two directories (a and b) 
+	  then a change to the file using the name "a/x" should be notified to a program expecting 
+	  notifications on directory "a", but will not be notified to one expecting notifications on 
+	  directory "b”. Also, files that are unlinked will still continue to receive notification
+	- Additionally, the file descriptor pins the directory, disallowing the backing device to be 
+	  unmounted, which causes problems in scenarios involving removable media
+
+- Inotify:
+	- brought in as a replacement to Dnotify
+	- it uses a data structure for each and every file under its watch and maintains a list of changes 
+	  made to each file. It also maintains the changes in a watch queue. The system does provide a 
+	  lot of functionality. However, it misses out on one thing, efficiency. Inotify occupies too 
+	  much space as it maintains a data structure for each modified file
+	- Moreover, for large files, it does not keep track of the blocks that were changed
+	- It also does not support recursively watching directories, meaning that a separate inotify 
+	  watch must be created for every subdirectory
+
+
+------------------
+Assumptions
+------------------
+Considering the other course work, we will be taking following assumptions during our implementation:
+	- Although user can set watch on multiple directories (none of which are parent directory of 
+	  each other), we are assuming that user will not run multiple programs in parallel to modify 
+	  files present in more than one directory being watched. So, we are assuming lock free 
+	  operations here
+
+
+----------------------------
+Our Implementation
+----------------------------
+User Level - uWatch
+--------------------------- 
+The user level program will be uWatch. It will make call to a newly created system call to perform 
+following operations:
+	- SetWatch
+	- it will take a directory as an input and add watch on it
+	- trying to add a sub-directory of an already watched directory will be of no use as we will 
+	  be taking care of hierarchy
+	- user can set watch of multiple directories
+
+- GetWatchDirs
+	- it will get the list of directories being watched
+
+- GetWatchFiles
+	- it will take a directory as i/p and will get the files modified since last flush
+
+- Flush
+	- using flush, we will try to simulate a scenario where backup system backs up all the 
+	  changed files till a time, t0
+	- so, we will do this flush manually in user-land
+
+- Remove Watch
+	- This will remove the directory from watch
+
+
+----------------------------------------------------
+Kernel Level - sysWatch() and kWatch
+-----------------------------------------------------
+	- a new system call has already implemented, sysWatch()
+	- a kernel module has been implemented too, kWatch
+	- once kWatch is inserted, it will initialize the data structures (DS) and will copy 
+	  the preexisting changes from a file located at the root directory
+	- The DS we have used for tracking the changes, is quite simple and efficient. We 
+	  have created two data DS:
+		struct head_node {
+		unsigned long inode;
+		struct head_node* next;
+		struct data_node* data;
+		};
+
+		struct data_node {
+		unsigned long inode;
+		struct data_node* data;
+		//bitmap to track file blocks will be added here
+		};
+
+	- head_node, maintain the info of the main directory under watch
+		- data_node, maintains the modified files inside the directory being watched 
+
+
+As these DS grows, it looks like this:
+
+	root -> Watched Dir1 -> Watched Dir2 -> Watched Dir3 -> NULL
+                      |               |               |
+                      V               V               V
+                Data_obj13      Data_obj23        Data_obj33
+                      |               |               |                        
+                      V               V               V
+                Data_obj12      Data_obj22        Data_obj32
+                      |               |               |                        
+                      V               V               V
+                Data_obj11      Data_obj21        Data_obj31
+                      |               |               |
+                      V               V               V
+                     NULL            NULL            NULL
+
+This is efficient because:
+	- it consumes only 12 bytes for each head_node and 8 bytes for each data_node
+	- the parent directory being watched can be found in O(n)
+	- the last modified files in a given watched directory can also be found in O(n) in 
+	  the order they were modified
+	- due to its simple design, we can easily save the complete data structure to a file 
+	  (during module unload) and then read it back again (during module load). This can 
+	  be helpful in scenarios, when for some reason, the backup system goes down, and 
+	  then all modified files keep accumulating this, causing the size of this data 
+	  structure to become considerably huge. At that moment, this complete data structure 
+	  can be flushed to a file
+
+
+-------------------------------
+Tracking Modifications
+-------------------------------
+	- Just to create a naive version, we have already intercepted utimes() and are 
+	  able to track the files modified using “touch”
+	- We do not want to intercept too many system calls as that can hinder system 
+	  performance, so we are still trying to narrow down on the system calls
+	- We tried intercepting write() but since that goes in the infinite loop due to 
+	  printk() in our module, so we will now try for write_page()/commit_write()
+
+
+--------------------
+Benchmarking
+--------------------
+	- we will benchmark it against iNotify
+	- we will write a user level test program, which will create directories and 
+	  files, add watch to them, make some changes in the files, and compare the 
+	  execution time and memory footprint
+
+
+------------------
+Script for demo
+------------------
+	- Overview of the code
+	- Demonstrate that it is clean and easy to implement
+	- Demonstrate with the help of a test program, that our module works faster 
+	  than existing implementation, inotify
+	- If it does not, then why not and its analysis
+	- If yes, then it is obviously good
+
+
+---------------
+References
+---------------
+Dnotify:
+	http://www.cyberciti.biz/files/linux-kernel/Documentation/filesystems/dnotify.txt
+
+Inotify:
+	http://www.developertutorials.com/tutorials/linux/monitor-linux-inotify-050531-1133/
+	http://en.wikipedia.org/wiki/Inotify#Disadvantages
+	http://www.linuxjournal.com/article/8478

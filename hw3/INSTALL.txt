@@ -1,0 +1,34 @@
+How to make?
+	- first fire a make in the kernel's root directory
+	- cd hw3
+	- make
+
+How to run?
+	Standalone Testing:
+	- cd hw3
+	- insmod kWatch.ko
+	- run uWatch with appropriate arguments, preferably from
+	user mode
+
+	Bulk Testing:
+	- to facilitate bulk testing
+	- cd hw3/testscripts
+	- part 1:
+		- ./script1.sh - run with appropriate arguments for 
+		testing file creation, updation, file chunk, removal 
+		in bulk mode i.e for performance testing
+
+	- part 2:
+		- ./script2.sh - for testing file creation, updation,
+		file chunk, removal on small test data
+
+		- ./script3.sh - for creation and deletion of directories recursively
+
+		- ./script4.sh - for testing file rename
+
+		- ./script5.sh - for testing check changing metadata (owner) of file
+
+		- ./script6.sh - for testing check changing metadata (mode) of file
+
+How to clean?
+	- fire a "make clean" from hw3
